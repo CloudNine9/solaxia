@@ -72,9 +72,8 @@ import server.life.MapleNPC;
 import server.life.MonsterDropEntry;
 import server.life.MonsterGlobalDropEntry;
 import server.life.SpawnPoint;
-import server.partyquest.MonsterCarnival;
-import server.partyquest.MonsterCarnivalParty;
 import server.partyquest.Pyramid;
+import server.partyquest.mcpq.MCWZData;
 import tools.FilePrinter;
 import tools.MaplePacketCreator;
 import tools.Pair;
@@ -133,6 +132,9 @@ public class MapleMap {
     private final WriteLock chrWLock;
     private final ReadLock objectRLock;
     private final WriteLock objectWLock;
+    // CPQ
+    private boolean respawning = true;
+    private MCWZData mcpqData;
 
     public MapleMap(int mapid, int world, int channel, int returnMapId, float monsterRate) {
         this.mapid = mapid;
@@ -151,11 +153,11 @@ public class MapleMap {
         objectRLock = objectLock.readLock();
         objectWLock = objectLock.writeLock();
     }
-    
+
     public ReadLock getCharacterReadLock() {
         return chrRLock;
     }
-    
+
     public WriteLock getCharacterWriteLock() {
         return chrWLock;
     }
@@ -634,12 +636,6 @@ public class MapleMap {
         //if (monster.getStats().selfDestruction() == null) {//FUU BOMBS D:
         removeMapObject(monster);
         //}
-        if (monster.getCP() > 0 && chr.getCarnival() != null) {
-            chr.getCarnivalParty().addCP(chr, monster.getCP());
-            chr.announce(MaplePacketCreator.updateCP(chr.getCP(), chr.getObtainedCP()));
-            broadcastMessage(MaplePacketCreator.updatePartyCP(chr.getCarnivalParty()));
-            //they drop items too ):
-        }
         if (monster.getId() >= 8800003 && monster.getId() <= 8800010) {
             boolean makeZakReal = true;
             Collection<MapleMapObject> objects = getMapObjects();
@@ -1185,10 +1181,10 @@ public class MapleMap {
                     List<MapleMapObject> players = getMapObjectsInBox(mist.getBox(), Collections.singletonList(MapleMapObjectType.PLAYER));
                     for (MapleMapObject mo : players) {
                         if (mist.makeChanceResult()) {
-                        	MapleCharacter chr = (MapleCharacter) mo;
-                        	if (mist.getOwner().getId() == chr.getId() || mist.getOwner().getParty() != null && mist.getOwner().getParty().containsMembers(chr.getMPC())) {	                        	
-	                        	chr.addMP((int) mist.getSourceSkill().getEffect(chr.getSkillLevel(mist.getSourceSkill().getId())).getX() * chr.getMp() / 100);
-                        	}
+                            MapleCharacter chr = (MapleCharacter) mo;
+                            if (mist.getOwner().getId() == chr.getId() || mist.getOwner().getParty() != null && mist.getOwner().getParty().containsMembers(chr.getMPC())) {
+                                chr.addMP((int) mist.getSourceSkill().getEffect(chr.getSkillLevel(mist.getSourceSkill().getId())).getX() * chr.getMp() / 100);
+                            }
                         }
                     }
                 }
@@ -1196,7 +1192,7 @@ public class MapleMap {
             poisonSchedule = tMan.register(poisonTask, 2000, 2500);
         } else {
             poisonSchedule = null;
-        }      
+        }
         tMan.schedule(new Runnable() {
             @Override
             public void run() {
@@ -1472,12 +1468,6 @@ public class MapleMap {
             chr.announce(MaplePacketCreator.rollSnowBall(true, 0, null, null));
         }
 
-        MonsterCarnival carnival = chr.getCarnival();
-        MonsterCarnivalParty cparty = chr.getCarnivalParty();
-        if (carnival != null && cparty != null && (mapid == 980000101 || mapid == 980000201 || mapid == 980000301 || mapid == 980000401 || mapid == 980000501 || mapid == 980000601)) {
-            chr.getClient().announce(MaplePacketCreator.getClock((int) (carnival.getTimeLeft() / 1000)));
-            chr.getClient().announce(MaplePacketCreator.startCPQ(chr, carnival.oppositeTeam(cparty)));
-        }
         if (hasClock()) {
             Calendar cal = Calendar.getInstance();
             chr.getClient().announce((MaplePacketCreator.getClockTime(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), cal.get(Calendar.SECOND))));
@@ -1766,7 +1756,6 @@ public class MapleMap {
         if (sp.shouldSpawn() || mobTime == -1) {// -1 does not respawn and should not either but force ONE spawn
             spawnMonster(sp.getMonster());
         }
-
     }
 
     public Collection<MapleCharacter> getCharacters() {
@@ -1912,7 +1901,7 @@ public class MapleMap {
     public void setBackgroundTypes(HashMap<Integer, Integer> backTypes) {
         backgroundTypes.putAll(backTypes);
     }
-    
+
     // not really costly to keep generating imo
     public void sendNightEffect(MapleCharacter mc) {
         for (Entry<Integer, Integer> types : backgroundTypes.entrySet()) {
@@ -1921,7 +1910,7 @@ public class MapleMap {
             }
         }
     }
-    
+
     public void broadcastNightEffect() {
         chrRLock.lock();
         try {
@@ -2378,5 +2367,53 @@ public class MapleMap {
 
     public short getMobInterval() {
         return mobInterval;
+    }
+
+    public final List<MapleMonster> getAllMonsters() {
+        return getAllMapObjects(MapleMapObjectType.MONSTER);
+    }
+
+    public void setReactorState(MapleReactor reactor, byte state) {
+        synchronized (this.mapobjects) {
+            reactor.setState(state);
+            broadcastMessage(MaplePacketCreator.triggerReactor(reactor, state));
+        }
+    }
+
+    public <E extends MapleMapObject> List<E> getAllMapObjects(MapleMapObjectType type) {
+        List<E> ret = new ArrayList<>();
+        synchronized (mapobjects) {
+            for (MapleMapObject l : mapobjects.values()) {
+                if (l.getType() == type) {
+                    ret.add((E) l);
+                }
+            }
+        }
+        return ret;
+    }
+
+    public Collection<SpawnPoint> getSpawnPoints() {
+        return monsterSpawn;
+    }
+
+    public void beginSpawning() {
+        this.respawning = true;
+        this.respawn();
+    }
+
+    public boolean isRespawning() {
+        return respawning;
+    }
+
+    public void setRespawning(boolean respawning) {
+        this.respawning = respawning;
+    }
+
+    public MCWZData getMCPQData() {
+        return this.mcpqData;
+    }
+
+    public void setMCPQData(MCWZData data) {
+        this.mcpqData = data;
     }
 }

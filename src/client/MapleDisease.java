@@ -18,7 +18,7 @@
 
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 package client;
 
 public enum MapleDisease {
@@ -33,10 +33,10 @@ public enum MapleDisease {
     DARKNESS(0x10000000000000L),
     WEAKEN(0x4000000000000000L),
     CURSE(0x8000000000000000L);
-    
+
     private long i;
     private boolean first;
-    
+
     private MapleDisease(long i) {
         this.i = i;
         this.first = false;
@@ -46,13 +46,31 @@ public enum MapleDisease {
         this.i = i;
         this.first = first;
     }
-    
+
     public long getValue() {
         return i;
     }
 
-	public boolean isFirst() {
-		return first;
-	}
-	
+    public boolean isFirst() {
+        return first;
+    }
+
+    public static MapleDisease getType(int skill) {
+        switch (skill) {
+            case 120:
+                return MapleDisease.SEAL;
+            case 121:
+                return MapleDisease.DARKNESS;
+            case 122:
+                return MapleDisease.WEAKEN;
+            case 123:
+                return MapleDisease.STUN;
+            case 125:
+                return MapleDisease.POISON;
+            case 128:
+                return MapleDisease.SEDUCE;
+            default:
+                return null;
+        }
+    }
 }

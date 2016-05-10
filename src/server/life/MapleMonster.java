@@ -58,6 +58,7 @@ import server.life.MapleLifeFactory.BanishInfo;
 import server.maps.MapleMap;
 import server.maps.MapleMapObject;
 import server.maps.MapleMapObjectType;
+import server.partyquest.mcpq.MCTracker;
 import tools.MaplePacketCreator;
 import tools.Pair;
 import tools.Randomizer;
@@ -79,7 +80,7 @@ public class MapleMonster extends AbstractLoadedMapleLife {
     private List<Pair<Integer, Integer>> usedSkills = new ArrayList<>();
     private Map<Pair<Integer, Integer>, Integer> skillsUsed = new HashMap<>();
     private List<Integer> stolenItems = new ArrayList<>();
-    private int team;
+    private int team = -1;
     private final HashMap<Integer, AtomicInteger> takenDamage = new HashMap<>();
 
     public ReentrantLock monsterLock = new ReentrantLock();
@@ -438,7 +439,20 @@ public class MapleMonster extends AbstractLoadedMapleLife {
         }
 
         MapleCharacter looter = map.getCharacterById(getHighestDamagerId());
+        if (team > -1) {
+            final int cp = getCP();
+            if (looter == null) {
+                return killer;
+            }
 
+            if (looter.getMCPQParty() == null) {
+                MCTracker.log("Attempted to give CP to character without assigned MCPQ Party.");
+                return killer;
+            }
+
+            looter.getMCPQField().monsterKilled(looter, cp);
+
+        }
         return looter != null ? looter : killer;
     }
 
@@ -828,11 +842,11 @@ public class MapleMonster extends AbstractLoadedMapleLife {
         tMan.schedule(
                 new Runnable() {
 
-                    @Override
-                    public void run() {
-                        mons.clearSkill(skillId, level);
-                    }
-                }, cooltime);
+            @Override
+            public void run() {
+                mons.clearSkill(skillId, level);
+            }
+        }, cooltime);
     }
 
     public void clearSkill(int skillId, int level) {
@@ -948,5 +962,22 @@ public class MapleMonster extends AbstractLoadedMapleLife {
 
     public Map<MonsterStatus, MonsterStatusEffect> getStati() {
         return stati;
+    }
+
+    public void dispel() {
+        if (!isAlive()) {
+            return;
+        }
+
+        for (MonsterStatus i : MonsterStatus.values()) {
+            if (getStati().containsKey(i)) {
+                debuffMob(i.getValue());
+                byte[] packet = MaplePacketCreator.cancelMonsterStatus(getObjectId(), Collections.singletonMap(i, Integer.valueOf(1)));
+                map.broadcastMessage(packet, getPosition());
+                if (getController() != null && !getController().isMapObjectVisible(MapleMonster.this)) {
+                    getController().getClient().getSession().write(packet);
+                }
+            }
+        }
     }
 }
